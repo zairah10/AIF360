@@ -32,15 +32,13 @@ __all__ = [
 ]
 
 # ============================= META-METRICS ===================================
-def difference(func, y, *args, prot_attr=None, priv_group=1, sample_weight=None,
-               **kwargs):
+def difference(func, y, *args, prot_attr=None, priv_group=1, unpriv_group=None,
+               sample_weight=None, **kwargs):
     """Compute the difference between unprivileged and privileged subsets for an
     arbitrary metric.
 
     Note: The optimal value of a difference is 0. To make it a scorer, one must
     take the absolute value and set greater_is_better to False.
-
-    Unprivileged group is taken to be the inverse of the privileged group.
 
     Args:
         func (function): A metric function from :mod:`sklearn.metrics` or
@@ -49,7 +47,15 @@ def difference(func, y, *args, prot_attr=None, priv_group=1, sample_weight=None,
         *args: Additional positional args to be passed through to func.
         prot_attr (array-like, keyword-only): Protected attribute(s). If
             ``None``, all protected attributes in y are used.
-        priv_group (scalar, optional): The label of the privileged group.
+        priv_group (scalar/tuple, optional):
+            In case of scalar, its the label of the privileged group.
+            In case of tuple, its the labels of the privileged groups,
+            representing an intersection from more than one protected attribute.
+        unpriv_group (None/tuple, optional):
+            In case of None, Unprivileged group is taken to be the inverse
+            of the privileged group.
+            In case of tuple, its the labels of the unprivileged groups,
+            representing an intersection from more than one protected attribute.
         sample_weight (array-like, optional): Sample weights passed through to
             func.
         **kwargs: Additional keyword args to be passed through to func.
@@ -66,12 +72,18 @@ def difference(func, y, *args, prot_attr=None, priv_group=1, sample_weight=None,
         -0.06955430006277463
     """
     groups, _ = check_groups(y, prot_attr)
-    idx = (groups == priv_group)
-    unpriv = map(lambda a: a[~idx], (y,) + args)
-    priv = map(lambda a: a[idx], (y,) + args)
+    priv_idx = (groups == priv_group)
+
+    if unpriv_group is not None:
+        unpriv_idx = (groups == unpriv_group)
+    else:
+        unpriv_idx = ~priv_idx
+
+    unpriv = map(lambda a: a[unpriv_idx], (y,) + args)
+    priv = map(lambda a: a[priv_idx], (y,) + args)
     if sample_weight is not None:
-        return (func(*unpriv, sample_weight=sample_weight[~idx], **kwargs)
-              - func(*priv, sample_weight=sample_weight[idx], **kwargs))
+        return (func(*unpriv, sample_weight=sample_weight[unpriv_idx], **kwargs)
+                - func(*priv, sample_weight=sample_weight[priv_idx], **kwargs))
     return func(*unpriv, **kwargs) - func(*priv, **kwargs)
 
 def ratio(func, y, *args, prot_attr=None, priv_group=1, sample_weight=None,
@@ -254,8 +266,8 @@ def generalized_fnr(y_true, probas_pred, pos_label=1, sample_weight=None):
 
 
 # ============================ GROUP FAIRNESS ==================================
-def statistical_parity_difference(*y, prot_attr=None, priv_group=1, pos_label=1,
-                                  sample_weight=None):
+def statistical_parity_difference(*y, prot_attr=None, priv_group=1, unpriv_group=None,
+                                  pos_label=1, sample_weight=None):
     r"""Difference in selection rates.
 
     .. math::
@@ -274,7 +286,15 @@ def statistical_parity_difference(*y, prot_attr=None, priv_group=1, pos_label=1,
             classifier.
         prot_attr (array-like, keyword-only): Protected attribute(s). If
             ``None``, all protected attributes in y_true are used.
-        priv_group (scalar, optional): The label of the privileged group.
+        priv_group (scalar/tuple, optional):
+            In case of scalar, its the label of the privileged group.
+            In case of tuple, its the labels of the privileged groups,
+            representing an intersection from more than one protected attribute.
+        unpriv_group (None/tuple, optional):
+            In case of None, Unprivileged group is taken to be the inverse
+            of the privileged group.
+            In case of tuple, its the labels of the unprivileged groups,
+            representing an intersection from more than one protected attribute.
         pos_label (scalar, optional): The label of the positive class.
         sample_weight (array-like, optional): Sample weights.
 
@@ -284,9 +304,18 @@ def statistical_parity_difference(*y, prot_attr=None, priv_group=1, pos_label=1,
     See also:
         :func:`selection_rate`, :func:`base_rate`
     """
+    if isinstance(prot_attr, list) and len(prot_attr) > 1 and isinstance(priv_group, int) and unpriv_group is None:
+        raise ValueError('When calculating statistical parity difference for an intersection of protected attributes, '
+                         'its expected to provide a tuple of priv_group and unpriv_group. '
+                         'For example: if prot_attr = [\'race\', \'gender\'], '
+                         'then priv_group could be (0.0, 0.0), and, '
+                         'unpriv_group could be (0.0, 1.0)')
+
     rate = base_rate if len(y) == 1 or y[1] is None else selection_rate
     return difference(rate, *y, prot_attr=prot_attr, priv_group=priv_group,
-                      pos_label=pos_label, sample_weight=sample_weight)
+                      unpriv_group=unpriv_group, pos_label=pos_label,
+                      sample_weight=sample_weight)
+
 
 def disparate_impact_ratio(*y, prot_attr=None, priv_group=1, pos_label=1,
                            sample_weight=None):
